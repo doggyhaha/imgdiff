@@ -4,3 +4,8 @@ config.ini
 *.jpg
 *.bolt
 *.txt
+*.session
+*.log
+*.db
+*.session-journal
+photos/*
