@@ -151,7 +151,7 @@ func main() {
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"version": "1.0.0",
-			"endpoints": []string{"/similarities", "/diff", "/info"},
+			"endpoints": []string{"/similarities", "/upload", "/"},
 			"hashtypes": hashes,
 		})
 		},
