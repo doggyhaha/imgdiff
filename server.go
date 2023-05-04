@@ -1,11 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 
-	"github.com/ajdnik/imghash/similarity"
 	"github.com/gin-gonic/gin"
 	bolt "go.etcd.io/bbolt"
 )
@@ -16,40 +14,86 @@ type Response struct {
 	Response 	interface{} `json:"response"`
 }
 
+// /upload
+func UploadHandler(c *gin.Context) { //user uploads image and gets back an ID
+	// get image from request
+	file, err := c.FormFile("image")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, Response{
+			Ok: false,
+			Error: err.Error(),
+			Response: nil,
+		})
+		return
+	}
+	// open image
+	img, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, Response{
+			Ok: false,
+			Error: err.Error(),
+			Response: nil,
+		})
+		return
+	}
+	defer img.Close()
+	// get image data
+	imgData, err := GetImageData(img)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, Response{
+			Ok: false,
+			Error: err.Error(),
+			Response: nil,
+		})
+		return
+	}
+	err = InsertImage(imgData)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, Response{
+			Ok: false,
+			Error: err.Error(),
+			Response: nil,
+		})
+		return
+	}
+	c.JSON(http.StatusOK, Response{
+		Ok: true,
+		Error: "",
+		Response: imgData,
+	})
+}
+
 // /similarities
 func SimilaritiesHandler(c *gin.Context) {
-	// Get file from request
-	//c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, int64(30<<20))
-	form, err := c.MultipartForm()
-	if err != nil {
+	//get image id from query
+	//get hash type from query
+	//get max distance from query
+	id := c.Query("id")
+	hashType := c.Query("hash")
+	maxDistance := c.Query("max_distance")
+	if id == "" {
 		c.JSON(http.StatusBadRequest, Response{
 			Ok: false,
-			Error: err.Error(),
+			Error: "id is required",
 			Response: nil,
 		})
 		return
 	}
-	files := form.File["file"]
-	if len(files) == 0 {
+	if hashType == "" {
+		hashType = "PHash"
+	} else if !ListContains(hashes, hashType) {
 		c.JSON(http.StatusBadRequest, Response{
 			Ok: false,
-			Error: "No file in request",
+			Error: errInvalidHash.Error(),
 			Response: nil,
 		})
 		return
 	}
-	file, err := files[0].Open()
-	if err != nil {
-		c.JSON(http.StatusBadRequest, Response{
-			Ok: false,
-			Error: err.Error(),
-			Response: nil,
-		})
-		return
+	if maxDistance == "" {
+		maxDistance = "10"
 	}
-	defer file.Close()
-	//limit file size
-	hash, err := hashImage(file)
+	//get image data from db
+	imgData, found, err := GetImageFromDB(id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, Response{
 			Ok: false,
@@ -58,21 +102,16 @@ func SimilaritiesHandler(c *gin.Context) {
 		})
 		return
 	}
-	err = insertInDB(hash, db)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, Response{
+	if !found {
+		c.JSON(http.StatusNotFound, Response{
 			Ok: false,
-			Error: err.Error(),
+			Error: "image ID not found",
 			Response: nil,
 		})
 		return
 	}
-	//get dist from query params
-	strdist := c.Query("dist")
-	if strdist == "" {
-		strdist = "10"
-	}
-	dist, err := strconv.Atoi(strdist)
+	//get similar images
+	floatDistance, err := strconv.ParseFloat(maxDistance, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, Response{
 			Ok: false,
@@ -81,8 +120,7 @@ func SimilaritiesHandler(c *gin.Context) {
 		})
 		return
 	}
-	
-	similarImgs, err := findSimilarImgs(db, hash, similarity.Distance(dist)) //one is the image itself
+	similarImages, err := FindSimilarImages(imgData, hashType, floatDistance)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, Response{
 			Ok: false,
@@ -91,49 +129,30 @@ func SimilaritiesHandler(c *gin.Context) {
 		})
 		return
 	}
-	for d, imgs := range similarImgs {
-		if d == "0" {
-			delete(similarImgs, d)
-			continue
-		}
-		fmt.Printf("Found %v similar images with %v%% difference\n", len(imgs), d)
-	}
-	if len(similarImgs) == 0 {
-		fmt.Println("No similar images found")
-		//{"ok": true, "similarities": null}
-		c.JSON(http.StatusOK, Response{
-			Ok: true,
-			Error: "",
-			Response: map[string]interface{}{
-				"similarities": nil,
-			},
-		})
-	} else {
-		//{"ok": true, "similarities": json serialized map}
-		//fmt.Println(similarImgs["1"][0].PHash)
-		c.JSON(http.StatusOK, Response{
-			Ok: true,
-			Error: "",
-			Response: similarImgs,
-		})
-	}
+	c.JSON(http.StatusOK, Response{
+		Ok: true,
+		Error: "",
+		Response: similarImages,
+	})
 }
 
 func main() {
 	var err error
-	db, err = bolt.Open("images.bolt", 0666, nil)
+	db, err = bolt.Open("images.bolt", 0666, nil) //initialize db globally
 	if err != nil {
 		panic(err)
 	}
 	defer db.Close()
 	router := gin.Default()
 	//gin.SetMode(gin.ReleaseMode)
-	router.POST("/similarities", SimilaritiesHandler)
+	router.GET("/similarities", SimilaritiesHandler)
+	router.POST("/upload", UploadHandler)
 	//router.POST("/diff", DiffHandler)
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"version": "1.0.0",
 			"endpoints": []string{"/similarities", "/diff", "/info"},
+			"hashtypes": hashes,
 		})
 		},
 	)
