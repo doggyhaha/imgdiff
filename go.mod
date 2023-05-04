@@ -1,4 +1,4 @@
-module imgscan
+module imgdiff
 
 go 1.20
 
