@@ -23,7 +23,7 @@ Feel free to check the [issues page](https://github.com/doggyhaha/imgdiff/issues
 
     If you like this project, please consider giving it a ⭐ to show your support.
 
-> **WARNING**
+> **Warning**
 > This project is not meant to be used in production. It was made for fun and doesn't implement any security/anti-abuse measures.
 
 ## License 📑
